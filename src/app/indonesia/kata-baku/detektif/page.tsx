@@ -5,6 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import Sidebar from '@/client/components/common/sidebar';
 import Header from '@/client/components/common/header';
 import { detektifData, type DetektifSoal } from '@/shared/data/kata-baku-data';
+import responseData from '../../../../../response.json';
 import {
   Search, ChevronRight, BookOpen, RotateCcw,
   CheckCircle, Trophy, ArrowLeft,
@@ -21,6 +22,50 @@ const DIFF_CLS: Record<Difficulty, string> = {
   medium: 'bg-amber-100 text-amber-700',
   hard:   'bg-red-100 text-red-700',
 };
+
+type DetektifResponsePayload = {
+  text?: string;
+  standart_vocabulary?: string[];
+  standard_vocabulary?: string[];
+};
+
+function normalizeDetektifPayload(payload: DetektifSoal | DetektifResponsePayload | null | undefined): DetektifSoal {
+  if (!payload) {
+    return { id: 0, judul: 'Soal Detektif', paragraf: [''], kataJawaban: [] };
+  }
+
+  if ('paragraf' in payload && Array.isArray(payload.paragraf) && 'kataJawaban' in payload && Array.isArray(payload.kataJawaban)) {
+    return {
+      id: payload.id ?? 0,
+      judul: payload.judul ?? 'Soal Detektif',
+      paragraf: payload.paragraf.filter((p): p is string => typeof p === 'string'),
+      kataJawaban: payload.kataJawaban.filter((w): w is string => typeof w === 'string'),
+    };
+  }
+
+  const text = 'text' in payload && typeof payload.text === 'string' ? payload.text : '';
+  const vocabulary = 'standart_vocabulary' in payload && Array.isArray(payload.standart_vocabulary)
+    ? payload.standart_vocabulary
+    : 'standard_vocabulary' in payload && Array.isArray(payload.standard_vocabulary)
+      ? payload.standard_vocabulary
+      : [];
+
+  const kataJawaban = vocabulary
+    .map((word) => (typeof word === 'string' ? word.trim() : '').toLowerCase())
+    .filter(Boolean);
+
+  const paragraf = text
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  return {
+    id: 0,
+    judul: 'Teks dari Respons',
+    paragraf: paragraf.length > 0 ? paragraf : [text],
+    kataJawaban: kataJawaban.map((word) => word.charAt(0).toUpperCase() + word.slice(1)),
+  };
+}
 
 // ─── Tokenizer ────────────────────────────────────────────────────────────────
 
@@ -186,13 +231,11 @@ function PlayingScreen({
 function ResultsScreen({
   soal,
   selected,
-  difficulty,
   onRestart,
   onBack,
 }: {
   soal: DetektifSoal;
   selected: string[];
-  difficulty: Difficulty;
   onRestart: () => void;
   onBack: () => void;
 }) {
@@ -243,12 +286,19 @@ function DetektifInner() {
   const router = useRouter();
   const difficulty = (searchParams.get('difficulty') ?? 'medium') as Difficulty;
 
+  const sourceSoals = useMemo(() => {
+    const payloads = Array.isArray(responseData) ? responseData : [responseData];
+    return [
+      ...payloads.map((item) => normalizeDetektifPayload(item as DetektifSoal | DetektifResponsePayload)),
+      ...detektifData.map((item) => normalizeDetektifPayload(item)),
+    ];
+  }, []);
+
   const soal: DetektifSoal = useMemo(() => {
     const needed = PARAGRAF_COUNT[difficulty];
-    const valid = detektifData.filter((s) => s.paragraf.length >= needed);
-    return valid[Math.floor(Math.random() * valid.length)] ?? detektifData[0];
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    const valid = sourceSoals.filter((s) => s.paragraf.length >= needed);
+    return valid[0] ?? sourceSoals[0] ?? normalizeDetektifPayload(null);
+  }, [difficulty, sourceSoals]);
 
   const [phase, setPhase] = useState<Phase>('playing');
   const [finalSelected, setFinalSelected] = useState<string[]>([]);
@@ -277,7 +327,6 @@ function DetektifInner() {
         <ResultsScreen
           soal={soal}
           selected={finalSelected}
-          difficulty={difficulty}
           onRestart={() => { setFinalSelected([]); setPhase('playing'); }}
           onBack={handleBack}
         />
